@@ -372,37 +372,32 @@ export default class EventuateClient {
     const ackOrderTracker = new AckOrderTracker();
 
     const acknowledge = (ack) => {
+      logger.debug('Acknowledge:', ack);
       ackOrderTracker.ack(ack).forEach(this.stompClient.ack.bind(this.stompClient));
     };
 
-    return (body, headers) => {
+    return async (eventStr, headers) => {
 
       ackOrderTracker.add(headers.ack);
 
-      return body.map(async (eventStr) => {
+      try {
+        const parsedEvent = parseEvent(eventStr);
+        const { eventData: eventDataStr } = parsedEvent;
+        const decryptedEventData = await this.decrypt(eventDataStr);
 
-        try {
-          const parsedEvent = parseEvent(eventStr);
-          const { eventData: eventDataStr } = parsedEvent;
-          const decryptedEventData = await this.decrypt(eventDataStr);
-
-          const eventData = parseEventDataWithSyntaxPeek(decryptedEventData);
-          const event = Object.assign(parsedEvent, { eventData }, { ack: headers.ack });
-          const eventResult = await eventHandler(event);
-          acknowledge(eventResult);
+        const eventData = parseEventDataWithSyntaxPeek(decryptedEventData);
+        const event = Object.assign(parsedEvent, { eventData }, { ack: headers.ack });
+        const eventResult = await eventHandler(event);
+        acknowledge(eventResult);
+      }
+      catch (err) {
+        if (err.code === 'EntityDeletedException') {
+          acknowledge(headers.ack);
+          return;
         }
-        catch (err) {
-          if (err.code === 'EntityDeletedException') {
-            acknowledge(headers.ack);
-            return;
-          } else {
-            console.debug(`Event info for re-thrown exception. Event string: '${ eventStr }', exception:`, err)
-          }
-
-          throw err;
-        }
-
-      });
+        logger.debug(`Event info for re-thrown exception. Event string: '${ eventStr }', exception:`);
+        throw err;
+      }
     }
   }
 
@@ -503,10 +498,10 @@ export default class EventuateClient {
 
     });
 
-    this.stompClient.on('message', frame => {
+    this.stompClient.on('message', async (frame) => {
 
       const headers = frame.headers;
-      const body = frame.body;
+      const body = frame.body[0];
 
       const ack = JSON.parse(unEscapeStr(headers.ack));
 
@@ -514,7 +509,12 @@ export default class EventuateClient {
 
       if (this.subscriptions.hasOwnProperty(subscriberId)) {
         //call message callback;
-        this.subscriptions[ subscriberId ].messageCallback(body, headers);
+        try {
+          await this.subscriptions[subscriberId].messageCallback(body, headers);
+        } catch (err) {
+          logger.error('Message callback exception');
+          throw err;
+        }
       } else {
         logger.error(`Can't find massageCallback for subscriber: ${subscriberId}`);
       }
