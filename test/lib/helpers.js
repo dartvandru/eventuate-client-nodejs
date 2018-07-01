@@ -1,7 +1,7 @@
 'use strict';
 
 const expect = require('chai').expect;
-const EventuateClient = require('../../dist');
+const EventuateClient = require('../../dist').default;
 const uuid = require('uuid');
 const specialChars = require('../../dist/modules/specialChars');
 const EventuateClientConfiguration = require('../../dist').EventuateClientConfiguration;
@@ -111,8 +111,8 @@ module.exports.parseAck = (event, done) => {
   }
 };
 
-module.exports.createEventuateClient = () => {
-  const eventuateClientOpts = new EventuateClientConfiguration({ debug: false });
+module.exports.createEventuateClient = (encryption) => {
+  const eventuateClientOpts = new EventuateClientConfiguration({ debug: false, encryption });
   return new EventuateClient(eventuateClientOpts);
 };
 
@@ -202,4 +202,10 @@ module.exports.createEventHandler = (callback) => {
       callback(event);
     });
   }
+};
+
+module.exports.expectEntityDeletedError = (error) => {
+  expect(error).to.be.instanceOf(Error);
+  expect(error).to.haveOwnProperty('code');
+  expect(error.code).to.equal('EntityDeletedException');
 };

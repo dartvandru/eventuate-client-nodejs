@@ -1,11 +1,12 @@
 import { getLogger } from './logger';
 import { retryNTimes } from './utils';
+import util from 'util';
 
-const logger = getLogger({ title: 'AggregateRepository' });
+const logger = getLogger({ title: 'EventuateClient:AggregateRepository' });
 const EVENT_STORE_UTILS_RETRIES_COUNT = process.env.EVENT_STORE_UTILS_RETRIES_COUNT || 10;
 
 export default class AggregateRepository {
-    constructor({ eventuateClient = {}, EntityClass } = {}) {
+    constructor({ eventuateClient = {}, EntityClass, retryErrConditionFn } = {}) {
 
     if (!eventuateClient) {
       throw new Error('The option `eventuateClient` is not provided.')
@@ -16,25 +17,21 @@ export default class AggregateRepository {
     }
 
     this.eventuateClient = eventuateClient;
+    let errConditionFn = retryErrConditionFn || function () {
+      return false;
+    };
 
     this.updateEntity = retryNTimes(
       {
         times: EVENT_STORE_UTILS_RETRIES_COUNT,
         fn: ({ EntityClass, entityId, command, options }) => {
-          let entity;
-          if (typeof (EntityClass) === 'function') {
-            entity = new EntityClass();
-          } else {
-            entity = new this.EntityClass();
-          }
-
+          const entity = this.createEntityInstance(EntityClass);
           const { entityTypeName } = entity;
           let entityVersion;
 
           return this.loadEvents({ entityTypeName, entityId, options })
             .then(
               loadedEvents => {
-
                 logger.debug('loadedEvents result:', loadedEvents);
 
                 entityVersion = this.getEntityVersionFromEvents(loadedEvents);
@@ -64,7 +61,10 @@ export default class AggregateRepository {
                 return Promise.resolve(result);
               },
               error => {
-                logger.error(`Update entity failed: ${EntityClass.name} ${entityId}`);
+                logger.error(`Update entity failed!
+                Entity class: ${EntityClass.name}
+                entityId: ${entityId}
+                command: ${util.inspect(command, false, 20)}`);
                 logger.error(error);
 
                 if (error.statusCode === 409) {
@@ -97,29 +97,32 @@ export default class AggregateRepository {
                 return Promise.reject(error);
               }
             )
-        }
+        },
+        errConditionFn
       });
   }
 
   createEntity({ EntityClass, command, options }) {
-    let entity;
-    if (typeof (EntityClass) === 'function') {
-      entity = new EntityClass();
-    } else {
-      entity = new this.EntityClass();
-    }
-    const processCommandMethod = this.getProcessCommandMethod(entity, command.commandType);
-    const events = processCommandMethod.call(entity, command);
+    try {
+      const entity = this.createEntityInstance(EntityClass);
+      const processCommandMethod = this.getProcessCommandMethod(entity, command.commandType);
+      const events = processCommandMethod.call(entity, command);
 
-    return this.eventuateClient.create(entity.entityTypeName, events, options)
-      .then(result=> {
-        logger.debug(`Created entity: ${EntityClass.name} ${result.entityIdTypeAndVersion.entityId} ${JSON.stringify(result)}`);
-        return result;
-      },
-      err => {
-        logger.error(`Create entity failed: ${EntityClass.name}`);
-        return Promise.reject(err);
-      })
+      return this.eventuateClient.create(entity.entityTypeName, events, options)
+        .then(result=> {
+            logger.debug(`Created entity: ${EntityClass.name} ${result.entityIdTypeAndVersion.entityId} ${JSON.stringify(result)}`);
+            return result;
+          },
+          err => {
+            logger.error(`Create entity failed: ${EntityClass.name}`);
+            return Promise.reject(err);
+          })
+    } catch (err) {
+      logger.error(`Create entity failed!
+      Entity class: ${EntityClass.name}
+      command: ${util.inspect(command, false, 20)}`);
+      return Promise.reject(err);
+    }
   }
 
   loadEvents({ entityTypeName, entityId, options }) {
@@ -170,21 +173,41 @@ export default class AggregateRepository {
     });
   }
 
-  find(entityId, options) {
-    const entity = new this.EntityClass();
-    return this.eventuateClient.loadEvents(entity.entityTypeName, entityId, options)
-      .then(loadedEvents => {
-        if (loadedEvents.length > 0) {
-          this.applyEntityEvents(loadedEvents, entity);
-          return entity;
-        }
-
+  async find({ EntityClass, entityId, options = {} }) {
+    const entity = this.createEntityInstance(EntityClass);
+    try {
+      let loadedEvents = await this.eventuateClient.loadEvents(entity.entityTypeName, entityId, options);
+      if (!loadedEvents.length) {
         return false;
-      })
-      .catch(err => {
-        logger.debug('AggregateRepository error:', err);
-        return Promise.reject(err);
-    });
+      }
+
+      const { version } = options;
+
+      if (version) {
+        loadedEvents = this.getEventsByVersion(loadedEvents, version);
+        if (!loadedEvents) {
+          return false;
+        }
+      }
+      this.applyEntityEvents(loadedEvents, entity);
+      return entity;
+    } catch (err) {
+      logger.debug('AggregateRepository error:', err);
+      throw err;
+    }
+  }
+
+  createEntityInstance(EntityClass) {
+    if (typeof (EntityClass) === 'function') {
+      return new EntityClass();
+    }
+    return new this.EntityClass();
+  }
+
+  getEventsByVersion(loadedEvents, version) {
+    const index = loadedEvents.findIndex(({ id }) => id === version);
+    if (index >= 0) {
+      return loadedEvents.slice(0, index +1);
+    }
   }
 }
-

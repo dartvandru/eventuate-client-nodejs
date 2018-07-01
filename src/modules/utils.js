@@ -1,35 +1,24 @@
 import util from 'util';
 
-export const parseIsTrue = val => {
-  return /^(?:t(?:rue)?|yes?|1+)$/i.test(val);
-};
+export const parseIsTrue = val => /^(?:t(?:rue)?|yes?|1+)$/i.test(val);
 
 export const retryNTimes = ({ times, fn, ctx, errConditionFn }) => {
 
-
-  if (typeof errConditionFn !== 'function') {
-    errConditionFn = err => err;
-  }
-
-  return function () {
-
-    var args = [].slice.call(arguments);
+  return function (...args) {
 
     return new Promise((resolve, reject) => {
-      var count = times;
+      let count = times;
       let innerCtx = this || ctx;
 
-      var worker = function () {
+      const worker = function () {
         fn.apply(innerCtx, args)
           .then(result => {
-
             return resolve(result);
           })
           .catch(err => {
-
             console.error(err);
-            if (errConditionFn(err)) {
 
+            if (errConditionFn(err)) {
               count--;
 
               if (!count) {
@@ -38,22 +27,14 @@ export const retryNTimes = ({ times, fn, ctx, errConditionFn }) => {
 
               console.log(`retryNTimes  ${count} - ${worker.name}() - ${util.inspect(args)}`);
               setTimeout(worker, 100);
-
               return;
             }
-
             reject(err);
           });
       };
-
       worker();
     });
   };
 };
 
-export const delay = (timeout) => {
-  return new Promise((resolve) => {
-
-    setTimeout(resolve, timeout);
-  })
-};
+export const delay = (timeout) => new Promise((resolve) => setTimeout(resolve, timeout));

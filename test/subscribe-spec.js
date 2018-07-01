@@ -2,8 +2,6 @@
   This test creates and updates one uniquely named entity with one event and subscribes to it
 */
 'use strict';
-const expect = require('chai').expect;
-const util = require('util');
 const helpers = require('./lib/helpers');
 
 const eventuateClient = helpers.createEventuateClient();
@@ -70,7 +68,7 @@ describe('Create and update entity. Subscribe for 2 events', function () {
             if (eventIds.indexOf(event.eventId) >= 0 ) {
               processedMessagesNumber++;
 
-              if (processedMessagesNumber == shouldBeProcessedNumber) {
+              if (processedMessagesNumber === shouldBeProcessedNumber) {
                 done();
               }
             } else {
