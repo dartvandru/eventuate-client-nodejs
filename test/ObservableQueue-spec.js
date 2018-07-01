@@ -47,26 +47,26 @@ describe('ObservableQueue', function () {
 
   it('should stop processing if handler error', done => {
 
-    let processedEvents = 0;
-    const stop = 3;
+    let processedEventsCounter = 0;
+    const breakpoint = 3;
 
-    const eventHandler = event => {
-      return new Promise((resolve, reject) => {
+    const eventHandler = () =>
+      new Promise((resolve, reject) => {
 
-        processedEvents++;
+        processedEventsCounter++;
 
-        if (stop === processedEvents) {
-          reject(new Error('Some error'));
-          return done();
+        if (breakpoint === processedEventsCounter) {
+          reject(new Error('Controlled exception'));
+          //return done();
+          return;
         }
 
-        if (processedEvents == events.length) {
-          done(new Error('The queue did not stop'))
+        if (processedEventsCounter === events.length) {
+          done(new Error('The queue did not interrupt'))
         }
 
         resolve();
       });
-    };
 
     const eventHandlers = {
       [entityType]: {
@@ -76,10 +76,13 @@ describe('ObservableQueue', function () {
 
     const queue = new ObservableQueue({ entityType, swimlane, eventHandlers });
 
-    events.forEach((event) => {
-      new Promise((resolve, reject) => {
-        queue.queueEvent({ event, resolve, reject });
-      });
+    Promise.all(events.map((event) =>
+      new Promise((rs, rj) => queue.queueEvent({ event, resolve: rs, reject: rj })))
+    ).then(done, (err) => {
+      if (err.message !== 'Controlled exception') {
+        done(err);
+      }
+      done();
     });
   });
 });

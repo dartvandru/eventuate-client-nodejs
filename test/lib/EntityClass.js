@@ -73,7 +73,7 @@ class EntityClass {
   }
 
   processFailureCommand(command) {
-    throw new Error('Command failed')
+    throw new Error('Command purposefully failed')
   }
 
   processCommand(command) {}

@@ -52,20 +52,15 @@ export default class Encryption {
   }
 
   async findKey(id) {
-    let key;
-    try {
-      key = await this.encryptionKeyStore.get(id);
-    } catch (err) {
-      throw err;
+    const key = await this.encryptionKeyStore.get(id);
+
+    if (key) {
+      return key;
     }
 
-    if (!key) {
-      const err = new Error(`Encryption key '${ id }' not found`);
-      err.code = 'EntityDeletedException';
-      throw err;
-    }
-
-    return key;
+    const err = new Error(`Encryption key '${ id }' not found`);
+    err.code = 'EntityDeletedException';
+    throw err;
   }
 
   isEncrypted(eventDataStr) {

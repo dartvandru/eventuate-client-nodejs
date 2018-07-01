@@ -395,7 +395,7 @@ export default class EventuateClient {
           acknowledge(headers.ack);
           return;
         }
-        logger.debug(`Event info for re-thrown exception. Event string: '${ eventStr }', exception:`);
+        logger.debug(`Event info for re-thrown exception. Event string: '${ eventStr }', exception: ${ err }`);
         throw err;
       }
     }
@@ -501,11 +501,11 @@ export default class EventuateClient {
     this.stompClient.on('message', async (frame) => {
 
       const headers = frame.headers;
-      const body = frame.body[0];
-
       const ack = JSON.parse(unEscapeStr(headers.ack));
+      const { subscriberId } = ack.receiptHandle;
 
-      const subscriberId = ack.receiptHandle.subscriberId;
+      const [ body, ...rest ] = frame.body;
+
 
       if (this.subscriptions.hasOwnProperty(subscriberId)) {
         //call message callback;
@@ -516,7 +516,7 @@ export default class EventuateClient {
           throw err;
         }
       } else {
-        logger.error(`Can't find massageCallback for subscriber: ${subscriberId}`);
+        logger.error(`Can't find massageCallback for subscriber: ${ subscriberId }`);
       }
     });
 
@@ -640,9 +640,7 @@ export default class EventuateClient {
 
     if (typeof obj === 'object') {
       return Object.keys(obj)
-        .map(key => {
-          return `${key}=${obj[ key ]}`;
-        })
+        .map(key => `${ key }=${ obj[ key ] }`)
         .join('&');
     }
   }
@@ -733,7 +731,7 @@ export default class EventuateClient {
           }
           break;
         case 'object':
-          ed = Object.assign({}, eventData);
+          ed = { ...eventData };
           break;
         default:
           return false;
