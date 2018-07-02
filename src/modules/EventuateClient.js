@@ -12,7 +12,7 @@ import { escapeStr, unEscapeStr } from './specialChars';
 import EventuateServerError from './EventuateServerError';
 import { getLogger } from './logger';
 import Result from './Result';
-import { delay } from './utils';
+import { delay, promised } from './utils';
 
 const logger = getLogger({ title: 'EventuateClient' });
 
@@ -35,7 +35,7 @@ export default class EventuateClient {
     this.setupKeepAliveAgent(httpKeepAlive);
 
     this.baseUrlPath = '/entity';
-    this.subscriptions = {};
+    this.subscriptions = new Map();
     this.receipts = {};
 
     this.reconnectInterval = 500;
@@ -57,11 +57,7 @@ export default class EventuateClient {
   }
 
   setupHttpClient() {
-    if (this.useHttps) {
-      this.httpClient = https;
-    } else {
-      this.httpClient = http;
-    }
+    this.httpClient = this.useHttps ? https : http;
   }
 
   setupKeepAliveAgent() {
@@ -75,11 +71,9 @@ export default class EventuateClient {
         keepAliveMsecs: 60000 // keep-alive for 60 seconds
       };
 
-      if (this.useHttps) {
-        this.keepAliveAgent = new HttpsAgent(keepAliveOptions);
-      } else {
-        this.keepAliveAgent = new Agent(keepAliveOptions);
-      }
+      this.keepAliveAgent = this.useHttps ?
+        new HttpsAgent(keepAliveOptions) :
+        new Agent(keepAliveOptions);
 
     }
   }
@@ -345,26 +339,16 @@ export default class EventuateClient {
 
   subscribe(subscriberId, entityTypesAndEvents, eventHandler, options, callback) {
 
-    if (!callback) {
+    if (!callback && (typeof options === 'function')) {
       callback = options;
       options = undefined;
     }
 
-    if (!subscriberId || !Object.keys(entityTypesAndEvents).length || (typeof eventHandler !== 'function')) {
-      return callback(new Error('Incorrect input parameters'));
-    }
+    const useCb = typeof callback === 'function';
 
-    if (this.subscriptions[ subscriberId ]) {
-      return callback(new Error(`The subscriberId "${subscriberId}" already used! Try another subscriberId.`))
-    }
-
-    const messageCallback = this.createMessageCallback(eventHandler);
-
-    this.connectToStompServer()
-      .then(() => {
-        this.addSubscription(subscriberId, entityTypesAndEvents, messageCallback, options, callback);
-        this.doClientSubscribe(subscriberId);
-      }, callback);
+    const result = subscribeAsync.call(this, subscriberId, entityTypesAndEvents, eventHandler, options);
+    useCb && result.then(val => callback(null, val), callback);
+    return result;
   }
 
   createMessageCallback(eventHandler) {
@@ -404,8 +388,9 @@ export default class EventuateClient {
   addSubscription(subscriberId, entityTypesAndEvents, messageCallback, options, clientSubscribeCallback) {
 
     //add new subscription if not exists
-    if (typeof this.subscriptions[ subscriberId ] === 'undefined') {
-      this.subscriptions[ subscriberId ] = {};
+
+    if (!this.subscriptions.has(subscriberId)) {
+      this.subscriptions.set(subscriberId, {})
     }
 
     const destinationObj = {
@@ -432,7 +417,7 @@ export default class EventuateClient {
     //add to receipts
     this.addReceipt(receipt, clientSubscribeCallback);
 
-    this.subscriptions[ subscriberId ] = {
+    this.subscriptions.set(subscriberId, {
       subscriberId,
       entityTypesAndEvents,
       messageCallback,
@@ -441,7 +426,7 @@ export default class EventuateClient {
         receipt,
         destination
       }
-    };
+    });
   }
 
   connectToStompServer() {
@@ -512,11 +497,12 @@ export default class EventuateClient {
         throw err;
       }
 
-      if (this.subscriptions.hasOwnProperty(subscriberId)) {
+      if (this.subscriptions.has(subscriberId)) {
         //call message callback;
         try {
-          await this.subscriptions[subscriberId].messageCallback(body, headers);
-        } catch (err) {
+          await this.subscriptions.get(subscriberId).messageCallback(body, headers);
+        }
+        catch (err) {
           logger.error('Message callback exception');
           throw err;
         }
@@ -548,13 +534,9 @@ export default class EventuateClient {
 
       this.connectToStompServer()
         .then(() => {
-
             //resubscribe
-            for (let subscriberId in this.subscriptions) {
-              if (this.subscriptions.hasOwnProperty(subscriberId)) {
-                this.doClientSubscribe(subscriberId);
-              }
-
+            for (const subscriberId of this.subscriptions.keys()) {
+              this.doClientSubscribe(subscriberId)
             }
           },
           error => {
@@ -585,13 +567,13 @@ export default class EventuateClient {
 
   doClientSubscribe(subscriberId) {
 
-    if (!this.subscriptions.hasOwnProperty(subscriberId)) {
+    if (!this.subscriptions.has(subscriberId)) {
       return logger.error(new Error(`Can't find subscription for subscriber ${subscriberId}`));
     }
 
-    const subscription = this.subscriptions[ subscriberId ];
+    const subscription = this.subscriptions.get( subscriberId );
 
-    this.stompClient.subscribe(subscription.headers);
+    return this.stompClient.subscribe(subscription.headers);
   }
 
   disconnect() {
@@ -641,13 +623,13 @@ export default class EventuateClient {
     };
   }
 
+  /**
+   * @deprecated avoid this method, use a direct function call instead
+   * @param obj
+   * @returns {*}
+   */
   serialiseObject(obj) {
-
-    if (typeof obj === 'object') {
-      return Object.keys(obj)
-        .map(key => `${ key }=${ obj[ key ] }`)
-        .join('&');
-    }
+    return serializeObject(obj);
   }
 
   addBodyOptions(jsonData, options) {
@@ -662,119 +644,60 @@ export default class EventuateClient {
     }
   }
 
+  /**
+   * @deprecated avoid this method, use a direct function call instead
+   * @param events
+   * @returns {*}
+   */
   prepareEvents(events) {
-
-    return events.map(({ eventData, ...rest } = event) => {
-
-      if (typeof eventData === 'object') {
-        eventData = JSON.stringify(eventData);
-      }
-
-      return {
-        ...rest,
-        eventData
-      };
-    });
-  }
-
-  eventDataToObject(events) {
-
-    return events.map(e => {
-
-      const { eventData: eventDataStr, ...event } = e;
-
-      if (typeof eventDataStr !== 'string') {
-        return { ...e };
-      }
-
-      let eventData = {};
-      try {
-        eventData = JSON.parse(eventDataStr);
-      }
-      catch (err) {
-        logger.error(`Cannot parse 'eventData' of an event: ${ JSON.stringify(e) }. `);
-        logger.error(err);
-      }
-
-      return {
-        ...event,
-        eventData
-      };
-    });
+    return prepareEvents(events);
   }
 
   /**
-   * Checks that events have all needed properties
-   * Checks eventData
-   * @param {Object[]} events - Events
-   * @param {string} events[].eventType - The type of event
-   * @param {string|Object} events[].eventData - The event data
-   * @returns {Boolean}
+   * @deprecated avoid this method, use a direct function call instead
+   * @param events
+   * @returns {*}
+   */
+  eventDataToObject(events) {
+    return eventDataToObject(events);
+  }
+
+  /**
+   * @deprecated avoid this method, use a direct function call instead
    */
   checkEvents(events) {
-
-    if (!Array.isArray(events) || !events.length) {
-      return false;
-    }
-
-    return events.every(({ eventType, eventData }) => {
-
-      if (!eventType || !eventData) {
-        return false;
-      }
-
-      let ed;
-      switch (typeof eventData) {
-        case 'string':
-          ed = eventData;
-          //try to parse eventData
-          try {
-            ed = JSON.parse(ed);
-          }
-          catch (e) {
-            return false;
-          }
-          break;
-        case 'object':
-          ed = { ...eventData };
-          break;
-        default:
-          return false;
-      }
-
-      // eventData object bears _some_ data results in true
-      return Object.keys(ed).length !== 0;
-
-    });
+    return checkEvents(events);
   }
 
   encryptEvents(encryptionKeyId, events) {
-    return Promise.all(events.map(async ({ eventData, ...rest  }, idx) => {
+    return Promise.all(events.map(async ({ eventData, ...rest }, idx) => {
       try {
         const encryptedEventData = await this.encrypt(encryptionKeyId, eventData);
         return {
           ...rest,
           eventData: encryptedEventData
         };
-      } catch(err) {
+      }
+      catch (err) {
         logger.error('encryptEvents error:', err);
-        logger.debug('encryptEvents params:', { eventData, ...rest  }, idx);
+        logger.debug('encryptEvents params:', { eventData, ...rest }, idx);
         throw err;
       }
     }).filter(Boolean));
   }
 
   decryptEvents(events) {
-    return Promise.all(events.map(async ({ eventData, ...rest  }) => {
+    return Promise.all(events.map(async ({ eventData, ...rest }) => {
       try {
         const decryptedEventData = await this.decrypt(eventData);
         return {
           ...rest,
           eventData: decryptedEventData
         };
-      } catch (err) {
+      }
+      catch (err) {
         logger.error('decryptEvents error:', err);
-        logger.debug('decryptEvents params:', { eventData, ...rest  });
+        logger.debug('decryptEvents params:', { eventData, ...rest });
         return null;
       }
     }).filter(Boolean));
@@ -793,6 +716,121 @@ export default class EventuateClient {
     }
     return eventDataStr;
   }
+}
+
+async function subscribeAsync(subscriberId, entityTypesAndEvents, eventHandler, options) {
+
+  if (!subscriberId || !Object.keys(entityTypesAndEvents).length || (typeof eventHandler !== 'function')) {
+    throw new Error('Incorrect input parameters');
+  }
+
+  if (this.subscriptions.has(subscriberId) ) {
+    throw new Error(`The subscriberId "${ subscriberId }" already used! Try another subscriberId.`);
+  }
+
+  const messageCallback = this.createMessageCallback(eventHandler);
+
+  await this.connectToStompServer();
+  return await promised(cb => {
+    this.addSubscription(subscriberId, entityTypesAndEvents, messageCallback, options, cb);
+    this.doClientSubscribe(subscriberId);
+  });
+}
+
+function serializeObject(obj) {
+
+  if (typeof obj !== 'object') {
+    return '';
+  }
+  return Object.keys(obj)
+    .map(key => `${ encodeURIComponent(key) }=${ encodeURIComponent(obj[ key ]) }`)
+    .join('&');
+}
+
+function prepareEvents(events) {
+
+  return events.map(({ eventData, ...rest } = event) => {
+
+    if (typeof eventData === 'object') {
+      eventData = JSON.stringify(eventData);
+    }
+
+    return {
+      ...rest,
+      eventData
+    };
+  });
+}
+
+/**
+ * Checks that events have all needed properties
+ * Checks eventData
+ * @param {Object[]} events - Events
+ * @param {string} events[].eventType - The type of event
+ * @param {string|Object} events[].eventData - The event data
+ * @returns {Boolean}
+ */
+function checkEvents(events) {
+
+  if (!Array.isArray(events) || !events.length) {
+    return false;
+  }
+
+  return events.every(({ eventType, eventData }) => {
+
+    if (!eventType || !eventData) {
+      return false;
+    }
+
+    let ed;
+    switch (typeof eventData) {
+      case 'string':
+        ed = eventData;
+        //try to parse eventData
+        try {
+          ed = JSON.parse(ed);
+        }
+        catch (e) {
+          return false;
+        }
+        break;
+      case 'object':
+        ed = { ...eventData };
+        break;
+      default:
+        return false;
+    }
+
+    // eventData object bears _some_ data results in true
+    return Object.keys(ed).length !== 0;
+
+  });
+}
+
+function eventDataToObject(events) {
+
+  return events.map(e => {
+
+    const { eventData: eventDataStr, ...event } = e;
+
+    if (typeof eventDataStr !== 'string') {
+      return { ...e };
+    }
+
+    let eventData = {};
+    try {
+      eventData = JSON.parse(eventDataStr);
+    }
+    catch (err) {
+      logger.error(`Cannot parse 'eventData' of an event: ${ JSON.stringify(e) }. `);
+      logger.error(err);
+    }
+
+    return {
+      ...event,
+      eventData
+    };
+  });
 }
 
 function parseEvent(eventStr) {

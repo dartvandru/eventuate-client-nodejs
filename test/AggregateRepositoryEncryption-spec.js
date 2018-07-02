@@ -332,6 +332,7 @@ describe('EventuateSubscriptionManager with encryption', function () {
           myEntityWasCreatedEventIds = myEntityWasCreatedEventIds.concat(createdEntityAndEventInfo.eventIds);
           console.log('myEntityWasCreatedEventIds:', myEntityWasCreatedEventIds);
           helpers.expectCommandResult(createdEntityAndEventInfo);
+          done();
         })
         .catch(done);
     }, 2000);

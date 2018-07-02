@@ -2,6 +2,10 @@ import util from 'util';
 
 export const parseIsTrue = val => /^(?:t(?:rue)?|yes?|1+)$/i.test(val);
 
+export const promised = (fn) =>
+  new Promise((rs, rj) =>
+    fn((error, result) => error ? rj(error) : rs(result)));
+
 export const retryNTimes = ({ times, fn, ctx, errConditionFn }) => {
 
   return function (...args) {
