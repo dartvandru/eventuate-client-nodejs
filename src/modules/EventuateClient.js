@@ -346,9 +346,16 @@ export default class EventuateClient {
 
     const useCb = typeof callback === 'function';
 
+    if (!subscriberId || !Object.keys(entityTypesAndEvents).length || (typeof eventHandler !== 'function')) {
+      throw new Error('Incorrect input parameters');
+    }
+
+    if (this.subscriptions.has(subscriberId) ) {
+      throw new Error(`The subscriberId "${ subscriberId }" already used! Try another subscriberId.`);
+    }
+
     const result = subscribeAsync.call(this, subscriberId, entityTypesAndEvents, eventHandler, options);
-    useCb && result.then(val => callback(null, val), callback);
-    return result;
+    return useCb ? result.then(val => callback(null, val), callback) : result;
   }
 
   createMessageCallback(eventHandler) {
@@ -714,14 +721,6 @@ export default class EventuateClient {
 }
 
 async function subscribeAsync(subscriberId, entityTypesAndEvents, eventHandler, options) {
-
-  if (!subscriberId || !Object.keys(entityTypesAndEvents).length || (typeof eventHandler !== 'function')) {
-    throw new Error('Incorrect input parameters');
-  }
-
-  if (this.subscriptions.has(subscriberId) ) {
-    throw new Error(`The subscriberId "${ subscriberId }" already used! Try another subscriberId.`);
-  }
 
   const messageCallback = this.createMessageCallback(eventHandler);
 
