@@ -506,6 +506,11 @@ export default class EventuateClient {
 
       const [ body, ...rest ] = frame.body;
 
+      if (!body) {
+        const err = new Error('Message body not provided');
+        logger.error(err);
+        throw err;
+      }
 
       if (this.subscriptions.hasOwnProperty(subscriberId)) {
         //call message callback;
