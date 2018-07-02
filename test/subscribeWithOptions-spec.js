@@ -39,7 +39,7 @@ describe('Subscribe with options', function () {
 
       console.log('Subscribed');
 
-      const destination = eventuateClient.subscriptions[subscriberId].headers.destination;
+      const destination = eventuateClient.subscriptions.get(subscriberId).headers.destination;
       const destinationObj = JSON.parse(unEscapeStr(destination));
 
       expect(destinationObj).to.have.property('durability');
