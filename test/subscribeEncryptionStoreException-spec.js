@@ -1,4 +1,5 @@
 'use strict';
+const expect = require('chai').expect;
 const helpers = require('./lib/helpers');
 const Encryption = require('../dist/modules/Encryption');
 
@@ -37,6 +38,7 @@ console.log('entityTypesAndEvent:', entityTypesAndEvents);
 let eventIds = [];
 
 before(done => {
+
   const eventuateClient = helpers.createEventuateClient(encryption);
   const createEvents = [ { eventType:  entityWasCreatedEvent, eventData: '{"name":"Fred"}' } ];
 
@@ -72,7 +74,6 @@ describe('Subscribe for 2 events', function () {
   this.timeout(25000);
 
   it('should fail', done => {
-    try {
     class EncryptionStore2 extends EncryptionStore {
       constructor() {
         super();
@@ -94,16 +95,13 @@ describe('Subscribe for 2 events', function () {
       });
     };
 
+    eventuateClient.subscribe(subscriberId, entityTypesAndEvents, eventHandler, err => {
+      if (err) {
+        expect(err.message).to.eq('ResourceNotFoundException');
+        done()
+      }
 
-      eventuateClient.subscribe(subscriberId, entityTypesAndEvents, eventHandler, err => {
-        if (err) {
-          return done(err)
-        }
-
-        console.log('The subscription has been established.')
-      });
-    } catch (err) {
-      done();
-    }
+      console.log('The subscription has been established.')
+    });
   });
 });
